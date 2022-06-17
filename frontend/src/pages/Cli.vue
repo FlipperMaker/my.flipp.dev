@@ -13,7 +13,53 @@
     </div>
     <div v-if="connected && !flags.rpcActive" class="full-width" style="height: calc(100vh - 50px)">
       <div id="terminal-container" class="fit bg-black q-pl-sm"></div>
+      <q-btn
+        @click="flags.sharePopup = true"
+        outline
+        color="white"
+        class="absolute-top-right q-ma-sm z-top"
+      >
+        {{ flags.serverActive ? 'Session live' : 'Share session' }}
+        <q-badge
+          v-if="flags.serverActive"
+          :label="connections > 0 ? connections.toString() : ''"
+          rounded
+          color="green"
+          class="q-ml-md"
+        />
+      </q-btn>
     </div>
+    <q-dialog v-model="flags.sharePopup">
+      <q-card>
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6 q-mr-xl">CLI session sharing</div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+        <q-card-section>
+          <template v-if="flags.serverActive">
+            <p>
+              Address:
+              <pre class="bg-grey-4 q-pa-xs rounded-borders">{{ address }}</pre>
+              <a :href="'/remote-cli#' + address">Share this link with your friend</a>
+            </p>
+
+            <p>Peers connected: {{ connections }}</p>
+          </template>
+        </q-card-section>
+
+        <q-card-actions align="right">
+          <q-btn
+            flat
+            :loading="flags.serverToggling"
+            :color="flags.serverActive ? 'negative' : 'black'"
+            @click="flags.serverActive ? stopServer() : startServer()"
+          >
+            {{ flags.serverActive ? 'Stop server' : 'Start server' }}
+          </q-btn>
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -36,12 +82,18 @@ export default defineComponent({
     return {
       flags: ref({
         rpcActive: false,
-        rpcToggling: false
+        rpcToggling: false,
+        serverActive: false,
+        serverToggling: false,
+        sharePopup: false
       }),
       terminal: ref(undefined),
       readInterval: undefined,
       input: ref(''),
-      unbind: ref(undefined)
+      unbind: ref(undefined),
+      server: ref(null),
+      connections: ref(0),
+      address: ref('')
     }
   },
 
@@ -79,6 +131,33 @@ export default defineComponent({
       this.flags.rpcActive = false
       this.flags.rpcToggling = false
       this.$emit('setRpcStatus', false)
+    },
+
+    startServer () {
+      this.flags.serverToggling = true
+      this.server = new window.Bugout({ seed: localStorage.getItem('bugout-seed') })
+      localStorage.setItem('bugout-seed', this.server.seed)
+      this.address = this.server.address()
+
+      this.server.on('connections', c => {
+        this.connections = c
+      })
+
+      // this.server.on('message', function (address, msg) { console.log('message:', address, msg) })
+
+      this.flags.serverToggling = false
+      this.flags.serverActive = true
+    },
+
+    stopServer () {
+      this.flags.serverToggling = true
+      this.server.close()
+      this.server = null
+      this.connections = 0
+      this.address = ''
+      this.flags.serverToggling = false
+      this.flags.serverActive = false
+      this.flags.sharePopup = false
     },
 
     async start () {
@@ -126,6 +205,9 @@ export default defineComponent({
         }
         if (data) {
           const text = new TextDecoder().decode(data).replaceAll('\x7F', '')
+          if (this.flags.serverActive) {
+            this.server.send({ data: text })
+          }
           this.terminal.write(text)
         }
       })
@@ -139,6 +221,7 @@ export default defineComponent({
   },
 
   async beforeUnmount () {
+    this.stopServer()
     this.unbind()
   }
 })
